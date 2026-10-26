@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Завершение входа — Рабочее пространство</title>
+<script src="https://yastatic.net/s3/passport-sdk/autofill/v1/sdk-suggest-token-with-polyfills-latest.js"></script>
+</head>
+<body>
+<p>Завершаю вход через Яндекс ID…</p>
+<script>
+(function(){
+  if (window.YaSendSuggestToken) {
+    window.YaSendSuggestToken('https://emptyto.github.io', {flag:true});
+  } else {
+    document.body.textContent = 'Не удалось завершить вход. Закрой окно и попробуй ещё раз.';
+  }
+})();
+</script>
+</body>
+</html>
