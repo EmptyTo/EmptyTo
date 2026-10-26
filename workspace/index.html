@@ -377,7 +377,6 @@ body.theme-light #yandex-auth-privacy{color:#827b92;border-color:#ddd7e8}
 @media(max-width:520px){#yandex-auth-card{padding:22px;border-radius:18px}#yandex-auth-title{font-size:20px}#yandex-session-bar{right:8px;top:8px}#yandex-session-name{max-width:130px}}
 
 </style>
-<script src="https://yastatic.net/s3/passport-sdk/autofill/v1/sdk-suggest-with-polyfills-latest.js"></script>
 </head>
 <body>
 
@@ -935,8 +934,65 @@ function importDbFile(file){if(!file)return;const reader=new FileReader();reader
 (function(){
   'use strict';
   const CLIENT_ID = '4933e63c6b8143f4a00917456a42454b';
-  const REDIRECT_URI = 'https://emptyto.github.io/EmptyTo/yandex-token.html';
-  const TOKEN_PAGE_ORIGIN = 'https://emptyto.github.io';
+  /* The callback path follows the deployed site, whether hosted at the domain root or a project path. */
+  const REDIRECT_URI = new URL('yandex-token.html', window.location.href).href;
+  const TOKEN_PAGE_ORIGIN = window.location.origin;
+  let authPopup = null;
+  let expectedOAuthState = null;
+
+  function beginDirectYandexLogin(){
+    let state;
+    try { state = crypto.randomUUID(); }
+    catch (_) { state = String(Date.now()) + '-' + Math.random().toString(36).slice(2); }
+    expectedOAuthState = state;
+    const params = new URLSearchParams({
+      response_type: 'token',
+      client_id: CLIENT_ID,
+      redirect_uri: REDIRECT_URI,
+      state: state,
+      force_confirm: 'yes'
+    });
+    const authUrl = 'https://oauth.yandex.ru/authorize?' + params.toString();
+    authPopup = window.open(authUrl, 'workspace-yandex-login', 'popup=yes,width=520,height=700,resizable=yes,scrollbars=yes');
+    if (!authPopup) {
+      expectedOAuthState = null;
+      showAuthError('Браузер заблокировал окно входа. Разреши всплывающие окна для этого сайта и нажми кнопку ещё раз.');
+      return false;
+    }
+    statusEl.textContent = 'Войди в Яндекс в открывшемся окне и подтверди доступ. Не закрывай это окно Workspace.';
+    loginButton.disabled = false;
+    return true;
+  }
+
+  window.addEventListener('message', async function(event){
+    if (event.origin !== window.location.origin) return;
+    if (!authPopup || event.source !== authPopup) return;
+    const data = event.data;
+    if (!data || data.type !== 'workspace-yandex-oauth-result') return;
+    if (!expectedOAuthState || data.state !== expectedOAuthState) {
+      authPopup = null;
+      expectedOAuthState = null;
+      showAuthError('Проверка безопасности входа не пройдена. Повтори попытку.');
+      return;
+    }
+    authPopup = null;
+    expectedOAuthState = null;
+    if (data.error) {
+      showAuthError('Яндекс не завершил вход: ' + String(data.error_description || data.error));
+      return;
+    }
+    if (!data.access_token) {
+      showAuthError('Яндекс не вернул подтверждение входа. Повтори попытку.');
+      return;
+    }
+    try {
+      await finishLogin({access_token: data.access_token});
+      statusEl.textContent = 'Вход через Яндекс выполнен. Данные техкарт по-прежнему хранятся локально в этом браузере.';
+    } catch (error) {
+      console.error('Yandex ID sign-in failed:', error);
+      showAuthError('Не удалось завершить вход. Повтори попытку.');
+    }
+  });
   const gate = document.getElementById('yandex-auth-gate');
   const statusEl = document.getElementById('yandex-auth-status');
   const loginButton = document.getElementById('yandex-login-button');
@@ -989,23 +1045,8 @@ function importDbFile(file){if(!file)return;const reader=new FileReader();reader
   }
   loginButton.addEventListener('click', function(){
     loginButton.disabled = true;
-    statusEl.textContent = 'Открываю безопасную авторизацию Яндекс ID…';
-    if (!window.YaAuthSuggest) {
-      showAuthError('Не загрузился скрипт Яндекса. Проверь интернет и обнови страницу.');
-      return;
-    }
-    window.YaAuthSuggest.init({
-      client_id: CLIENT_ID,
-      response_type: 'token',
-      redirect_uri: REDIRECT_URI
-    }, TOKEN_PAGE_ORIGIN)
-    .then(function(result){ return result.handler(); })
-    .then(function(data){ return finishLogin(data); })
-    .catch(function(error){
-      console.error('Yandex ID sign-in failed:', error);
-      showAuthError('Вход не завершился. Проверь Redirect URI в Яндекс OAuth: https://emptyto.github.io/EmptyTo/yandex-token.html');
-    })
-    .finally(function(){ loginButton.disabled = false; });
+    statusEl.textContent = 'Открываю авторизацию Яндекс ID…';
+    beginDirectYandexLogin();
   });
   logoutButton.addEventListener('click', function(){
     sessionStorage.removeItem('workspace_yandex_profile');
