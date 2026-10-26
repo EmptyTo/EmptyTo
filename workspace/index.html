@@ -933,12 +933,21 @@ function importDbFile(file){if(!file)return;const reader=new FileReader();reader
  window.__WORKSPACE_CLOUD_SYNC__={
   getSnapshot:function(){return JSON.stringify(db)},
   hasData:function(){
+   const settings=db.settings||{};
+   const defaultIcons={ingredients:'🥬',processed:'🔪',semis:'🥣',dishes:'🍽️'};
+   const icons=settings.categoryIcons||{};
+   const customIcons=Object.keys(defaultIcons).some(k=>icons[k]&&icons[k]!==defaultIcons[k]);
+   const hasFolders=Object.values(db.folders||{}).some(list=>Array.isArray(list)&&list.length>0);
+   const hasCustomVenue=(db.venues||[]).some(v=>String(v)!=='Основное заведение');
+   const hasVenueDetails=Object.keys(db.venueDetails||{}).length>0;
+   const hasSettings=settings.theme==='light'||(settings.accentColor&&settings.accentColor!=='#9b6cff')||customIcons;
+   const hasProfile=db.profile&&((db.profile.name&&db.profile.name!=='Технолог')||(db.profile.role&&db.profile.role!=='Технологическая база кухни')||!!db.profile.venue);
    return !!(
     db.ingredients.length||db.processed.length||db.semis.length||db.dishes.length||
     (db.suppliers||[]).length||(db.workups||[]).length||(db.sales||[]).length||
     (db.arrivalHistory||[]).length||(db.deletedCards||[]).length||
-    (db.venues||[]).length>1||
-    (db.profile&&((db.profile.name&&db.profile.name!=='Технолог')||(db.profile.role&&db.profile.role!=='Технологическая база кухни')))
+    hasCustomVenue||hasVenueDetails||hasFolders||hasSettings||hasProfile||
+    Object.keys(db.supplierPriceOverrides||{}).length>0
    )
   },
   replaceSnapshot:function(raw){
@@ -1068,22 +1077,31 @@ function importDbFile(file){if(!file)return;const reader=new FileReader();reader
    setSyncStatus(message,true);return {ok:false,message:message};
   }
  }
+ async function uploadLatestSnapshot(){
+  if(!activeToken||!activeOwner||applyingCloud)return;
+  const bridge=getBridge(),latest=bridge.getSnapshot(),token=activeToken,owner=activeOwner;
+  await uploadCloudSnapshot(token,owner,latest);
+  markSynced(owner,latest);
+  setSyncStatus('синхронизировано '+new Date().toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}));
+ }
  function scheduleCloudSave(){
   if(!activeToken||!activeOwner||applyingCloud)return;
   clearTimeout(saveTimer);setSyncStatus('сохранение изменений…');
   saveTimer=setTimeout(function(){
-   uploadQueue=uploadQueue.catch(()=>{}).then(async function(){
-    if(!activeToken||applyingCloud)return;
-    const bridge=getBridge(),latest=bridge.getSnapshot(),token=activeToken,owner=activeOwner;
-    await uploadCloudSnapshot(token,owner,latest);markSynced(owner,latest);
-    setSyncStatus('синхронизировано '+new Date().toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}));
-   }).catch(function(error){console.error('Yandex Disk auto-save failed:',error);setSyncStatus(String(error&&error.message||error),true)});
+   saveTimer=null;
+   uploadQueue=uploadQueue.catch(()=>{}).then(uploadLatestSnapshot).catch(function(error){console.error('Yandex Disk auto-save failed:',error);setSyncStatus(String(error&&error.message||error),true)});
   },1200);
  }
  window.__WORKSPACE_YANDEX_SYNC__={
   connect:connectAndSync,scheduleSave:scheduleCloudSave,
-  syncNow:async function(){if(!activeToken||!activeProfile){setSyncStatus('нужно войти заново',true);return}if(syncNowButton)syncNowButton.disabled=true;try{await connectAndSync(activeToken,activeProfile)}finally{if(syncNowButton)syncNowButton.disabled=false}},
-  disconnect:function(){clearTimeout(saveTimer);activeToken=null;activeOwner=null;activeProfile=null;uploadQueue=Promise.resolve();setSyncStatus('не подключено')}
+  syncNow:async function(){if(!activeToken||!activeProfile){setSyncStatus('нужно войти заново',true);return}if(syncNowButton)syncNowButton.disabled=true;try{await uploadQueue.catch(()=>{});await connectAndSync(activeToken,activeProfile)}finally{if(syncNowButton)syncNowButton.disabled=false}},
+  flushAndDisconnect:async function(){
+   clearTimeout(saveTimer);saveTimer=null;
+   try{await uploadQueue.catch(()=>{});if(activeToken&&activeOwner)await uploadQueue.catch(()=>{}).then(uploadLatestSnapshot);return true}
+   catch(error){console.error('Yandex Disk final save failed:',error);setSyncStatus(String(error&&error.message||error),true);return false}
+   finally{activeToken=null;activeOwner=null;activeProfile=null;uploadQueue=Promise.resolve()}
+  },
+  disconnect:function(){clearTimeout(saveTimer);saveTimer=null;activeToken=null;activeOwner=null;activeProfile=null;uploadQueue=Promise.resolve();setSyncStatus('не подключено')}
  };
  function beginDirectYandexLogin(){
   let state;try{state=crypto.randomUUID()}catch(_){state=String(Date.now())+'-'+Math.random().toString(36).slice(2)}
@@ -1122,10 +1140,16 @@ function importDbFile(file){if(!file)return;const reader=new FileReader();reader
   if(!data.access_token){showAuthError('Яндекс не вернул подтверждение входа. Повтори попытку.');return}
   try{await finishLogin({access_token:data.access_token})}catch(error){console.error('Yandex login failed:',error);showAuthError('Не удалось завершить вход. '+String(error&&error.message||error))}
  });
- logoutButton.addEventListener('click',function(){
-  if(window.__WORKSPACE_YANDEX_SYNC__)window.__WORKSPACE_YANDEX_SYNC__.disconnect();
-  sessionStorage.removeItem('workspace_yandex_profile');sessionBar.hidden=true;gate.hidden=false;
-  statusEl.textContent='Ты вышел из этого рабочего сеанса. Локальная база останется в браузере. Для синхронизации войди через тот же Яндекс ID.';
+ logoutButton.addEventListener('click',async function(){
+  logoutButton.disabled=true;
+  let saved=true;
+  if(window.__WORKSPACE_YANDEX_SYNC__&&typeof window.__WORKSPACE_YANDEX_SYNC__.flushAndDisconnect==='function')saved=await window.__WORKSPACE_YANDEX_SYNC__.flushAndDisconnect();
+  else if(window.__WORKSPACE_YANDEX_SYNC__)window.__WORKSPACE_YANDEX_SYNC__.disconnect();
+  if(!saved&&!confirm('Последнее сохранение на Яндекс Диск не удалось. Выйти всё равно? Локальные данные останутся в этом браузере, но последние изменения могут отсутствовать на другом устройстве.')){
+   logoutButton.disabled=false;return;
+  }
+  sessionStorage.removeItem('workspace_yandex_profile');sessionBar.hidden=true;gate.hidden=false;logoutButton.disabled=false;
+  statusEl.textContent=saved?'Ты вышел. Перед выходом изменения были отправлены на Яндекс Диск. Локальная база осталась в браузере.':'Ты вышел без подтверждённой синхронизации. Локальная база осталась в браузере.';
  });
  if(syncNowButton)syncNowButton.addEventListener('click',function(){window.__WORKSPACE_YANDEX_SYNC__.syncNow()});
  const existingUser=sessionStorage.getItem('workspace_yandex_profile');
