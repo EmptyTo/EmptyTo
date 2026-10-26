@@ -370,6 +370,10 @@ body.theme-light .workspace-switcher-option{color:var(--text)}body.theme-light .
 #yandex-session-bar{position:fixed;right:16px;top:12px;z-index:90;display:flex;align-items:center;gap:12px;max-width:calc(100vw - 32px);padding:7px 10px 7px 13px;border:1px solid var(--line);border-radius:999px;background:var(--panel);box-shadow:0 6px 24px #0002;font-size:11px}
 #yandex-session-name{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700}
 #yandex-logout-button{border:1px solid var(--line);border-radius:999px;background:var(--panel2);color:var(--text);padding:6px 10px;font-size:10px}
+#yandex-sync-status{font-size:10px;color:#9fddba;max-width:190px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#yandex-sync-now{border:1px solid var(--line);border-radius:999px;background:var(--panel2);color:var(--text);padding:6px 10px;font-size:10px}
+#yandex-sync-now:disabled{opacity:.5;cursor:wait}
+@media(max-width:720px){#yandex-session-bar{left:8px;right:8px;top:8px;width:auto;justify-content:space-between;gap:6px;padding:6px;font-size:10px}#yandex-sync-status{max-width:90px}#yandex-sync-now,#yandex-logout-button{padding:5px 7px;font-size:9px}}
 body.theme-light #yandex-auth-gate{background:radial-gradient(ellipse at 50% 0%,#f1e8ff 0,transparent 55%),#f3f1f8}
 body.theme-light #yandex-auth-card{background:#fff;border-color:#ddd7e8}
 body.theme-light #yandex-auth-subtitle,body.theme-light #yandex-auth-status{color:#726b83}
@@ -385,10 +389,10 @@ body.theme-light #yandex-auth-privacy{color:#827b92;border-color:#ddd7e8}
     <div id="yandex-auth-brand"><div id="yandex-auth-logo">W</div><div><div id="yandex-auth-title">Рабочее пространство</div><div id="yandex-auth-subtitle">Вход с помощью Яндекс ID</div></div></div>
     <button id="yandex-login-button" type="button"><span aria-hidden="true" style="font-size:19px">Я</span><span>Войти через Яндекс</span></button>
     <p id="yandex-auth-status" role="status">Войди через свой Яндекс-аккаунт, чтобы открыть рабочее пространство.</p>
-    <p id="yandex-auth-privacy">Это статическая версия сайта: вход подтверждает Яндекс-профиль в этой вкладке, а данные техкарт продолжают храниться локально в браузере. Они не синхронизируются между устройствами и сам экран входа не заменяет серверную защиту.</p>
+    <p id="yandex-auth-privacy">После входа сайт загрузит общую базу из папки приложения на Яндекс Диске и будет автоматически отправлять изменения туда. OAuth-токен используется только в памяти этой вкладки и не записывается в HTML или базу. Не работай одновременно с одной базой на нескольких устройствах: последняя синхронизация может заменить более ранние изменения.</p>
   </div>
 </div>
-<div id="yandex-session-bar" hidden><span>Яндекс ID: <strong id="yandex-session-name"></strong></span><button id="yandex-logout-button" type="button">Выйти</button></div>
+<div id="yandex-session-bar" hidden><span>Яндекс ID: <strong id="yandex-session-name"></strong></span><span id="yandex-sync-status" aria-live="polite">Диск: подключается…</span><button id="yandex-sync-now" type="button">Синхронизировать</button><button id="yandex-logout-button" type="button">Выйти</button></div>
 
 <div class="app">
 <aside class="sidebar" id="sidebar">
@@ -595,7 +599,7 @@ function normalizeDb(x={}){
  const schemaVersion=2;
  return {schemaVersion,profile,settings,ingredients,processed,semis,dishes,sales,workspaceMode,suppliers,workups,venues,currentVenue,folders,arrivalHistory,venueDetails,deletedCards,supplierPriceOverrides};
 }
-function saveDb(){try{const serialized=JSON.stringify(db);if(window.__TECHCARDS_SERVER_MODE__){if(window.__TC_REMOTE_AUTHENTICATED__&&typeof window.__TC_REMOTE_SAVE__==='function')window.__TC_REMOTE_SAVE__(serialized);return true}localStorage.setItem(STORE,serialized);return true}catch(e){toast('Не удалось сохранить: возможно, фото занимают слишком много места. Экспортируйте данные и уменьшите размер фото.','error');return false}}
+function saveDb(){try{const serialized=JSON.stringify(db);if(window.__TECHCARDS_SERVER_MODE__){if(window.__TC_REMOTE_AUTHENTICATED__&&typeof window.__TC_REMOTE_SAVE__==='function')window.__TC_REMOTE_SAVE__(serialized);return true}localStorage.setItem(STORE,serialized);if(window.__WORKSPACE_CLOUD_SYNC__&&typeof window.__WORKSPACE_CLOUD_SYNC__.scheduleSave==='function')window.__WORKSPACE_CLOUD_SYNC__.scheduleSave(serialized);return true}catch(e){toast('Не удалось сохранить: возможно, фото занимают слишком много места. Экспортируйте данные и уменьшите размер фото.','error');return false}}
 function toast(msg,type='success'){const el=document.createElement('div');el.className='toast '+type;el.textContent=msg;document.getElementById('toast-wrap').append(el);setTimeout(()=>el.remove(),3600)}
 function rawListBy(type){const key=type==='ingredient'?'ingredients':type==='semi'?'semis':type==='dish'?'dishes':type;return db[key]||[]}
 function listBy(type){const arr=rawListBy(type);if(type==='semi'||type==='semis')return arr.filter(x=>(x.venue||db.currentVenue)===db.currentVenue);if(type==='dish'||type==='dishes')return arr.filter(x=>(x.venue||db.currentVenue)===db.currentVenue);return arr}
@@ -926,136 +930,206 @@ function importDbFile(file){if(!file)return;const reader=new FileReader();reader
  ['workspace-venue-select','workspace-sales-venue-select'].forEach(id=>document.getElementById(id)?.addEventListener('change',e=>{db.currentVenue=e.target.value;saveDb();updateAll();if(currentView==='workspace-sales')renderWorkspaceSales()}));
  document.getElementById('workspace-sales-search').addEventListener('input',renderWorkspaceSales);document.getElementById('workspace-sales-period').addEventListener('change',renderWorkspaceSales);
  if(window.__TECHCARDS_SERVER_MODE__){window.addEventListener('techcards-remote-load',event=>{db=normalizeDb(event.detail||{});try{updateAll();renderAppearanceSettings();setWorkspaceMode(db.workspaceMode||'kitchen',false,false);navTo(db.workspaceMode==='workspace'?'workspace-dashboard':'overview')}catch(err){console.error('Не удалось загрузить облачную базу',err);toast('Не удалось загрузить базу аккаунта. Обновите страницу.','error')}});window.addEventListener('techcards-remote-save-error',()=>toast('Не удалось сохранить данные на сервер. Проверьте соединение и повторите действие.','error'));}
+ window.__WORKSPACE_CLOUD_SYNC__={
+  getSnapshot:function(){return JSON.stringify(db)},
+  hasData:function(){
+   return !!(
+    db.ingredients.length||db.processed.length||db.semis.length||db.dishes.length||
+    (db.suppliers||[]).length||(db.workups||[]).length||(db.sales||[]).length||
+    (db.arrivalHistory||[]).length||(db.deletedCards||[]).length||
+    (db.venues||[]).length>1||
+    (db.profile&&((db.profile.name&&db.profile.name!=='Технолог')||(db.profile.role&&db.profile.role!=='Технологическая база кухни')))
+   )
+  },
+  replaceSnapshot:function(raw){
+   const parsed=typeof raw==='string'?JSON.parse(raw):raw;
+   db=normalizeDb(parsed||{});
+   const normalized=JSON.stringify(db);
+   localStorage.setItem(STORE,normalized);
+   Object.keys(activeFolders).forEach(k=>activeFolders[k]='');
+   applyAppearance();renderAppearanceSettings();renderSidebarFolders();renderCounts();
+   renderProfile();renderProfileHistory();renderProfileSuppliers();renderOverview();renderWorkups();
+   setWorkspaceMode(db.workspaceMode||'kitchen',false,false);
+   if(db.workspaceMode==='workspace')navTo('workspace-dashboard');else navTo('overview');
+   return JSON.stringify(db);
+  },
+  scheduleSave:function(serialized){
+   if(window.__WORKSPACE_YANDEX_SYNC__&&typeof window.__WORKSPACE_YANDEX_SYNC__.scheduleSave==='function')window.__WORKSPACE_YANDEX_SYNC__.scheduleSave(serialized);
+  }
+ };
  applyAppearance();renderAppearanceSettings();renderSidebarFolders();renderCounts();renderProfile();renderProfileHistory();renderProfileSuppliers();renderOverview();renderWorkups();if(!window.__TECHCARDS_SERVER_MODE__)saveDb();setWorkspaceMode(db.workspaceMode||'kitchen',false,false);if(db.workspaceMode==='workspace')navTo('workspace-dashboard');else navTo('overview');
 })();
 </script>
 
 <script>
 (function(){
-  'use strict';
-  const CLIENT_ID = '4933e63c6b8143f4a00917456a42454b';
-  /* The callback path follows the deployed site, whether hosted at the domain root or a project path. */
-  const REDIRECT_URI = new URL('yandex-token.html', window.location.href).href;
-  const TOKEN_PAGE_ORIGIN = window.location.origin;
-  let authPopup = null;
-  let expectedOAuthState = null;
-
-  function beginDirectYandexLogin(){
-    let state;
-    try { state = crypto.randomUUID(); }
-    catch (_) { state = String(Date.now()) + '-' + Math.random().toString(36).slice(2); }
-    expectedOAuthState = state;
-    const params = new URLSearchParams({
-      response_type: 'token',
-      client_id: CLIENT_ID,
-      redirect_uri: REDIRECT_URI,
-      state: state,
-      force_confirm: 'yes'
-    });
-    const authUrl = 'https://oauth.yandex.ru/authorize?' + params.toString();
-    authPopup = window.open(authUrl, 'workspace-yandex-login', 'popup=yes,width=520,height=700,resizable=yes,scrollbars=yes');
-    if (!authPopup) {
-      expectedOAuthState = null;
-      showAuthError('Браузер заблокировал окно входа. Разреши всплывающие окна для этого сайта и нажми кнопку ещё раз.');
-      return false;
-    }
-    statusEl.textContent = 'Войди в Яндекс в открывшемся окне и подтверди доступ. Не закрывай это окно Workspace.';
-    loginButton.disabled = false;
-    return true;
+ 'use strict';
+ const CLIENT_ID='4933e63c6b8143f4a00917456a42454b';
+ const REDIRECT_URI=new URL('yandex-token.html',window.location.href).href;
+ let authPopup=null,expectedOAuthState=null,activeProfile=null,activeToken=null,activeOwner=null,saveTimer=null,uploadQueue=Promise.resolve(),applyingCloud=false;
+ const DISK_BASE='https://cloud-api.yandex.net/v1/disk', DB_PATH='app:/workspace-data.json', META_KEY='workspace_yandex_sync_meta_v1';
+ const gate=document.getElementById('yandex-auth-gate'),statusEl=document.getElementById('yandex-auth-status'),loginButton=document.getElementById('yandex-login-button'),sessionBar=document.getElementById('yandex-session-bar'),sessionName=document.getElementById('yandex-session-name'),syncStatus=document.getElementById('yandex-sync-status'),syncNowButton=document.getElementById('yandex-sync-now'),logoutButton=document.getElementById('yandex-logout-button');
+ function setSyncStatus(message,isError){
+  if(syncStatus){syncStatus.textContent='Диск: '+message;syncStatus.style.color=isError?'#ff8797':(String(message).includes('…')?'#ffc978':'#9fddba');syncStatus.title=message}
+  if(statusEl&&gate&&!gate.hidden&&isError)statusEl.textContent=message;
+ }
+ function parseApiError(response,payload){
+  const message=payload&&(payload.message||payload.description||payload.error);
+  if(response.status===401)return new Error('Токен Яндекса истёк или отозван. Нажми «Выйти» и подключись заново.');
+  if(response.status===403)return new Error('У Яндекс Диска нет нужного разрешения. В настройках OAuth проверь доступ к папке приложения Диска, затем повтори вход.');
+  return new Error('Яндекс Диск ответил '+response.status+(message?': '+message:'.'));
+ }
+ async function diskRequest(path,token,options){
+  const opts=options||{},headers=Object.assign({'Authorization':'OAuth '+token,'Accept':'application/json'},opts.headers||{});
+  const response=await fetch(DISK_BASE+path,Object.assign({},opts,{headers:headers,credentials:'omit',cache:'no-store'}));
+  let payload=null;const contentType=response.headers.get('content-type')||'';
+  if(contentType.includes('application/json')){try{payload=await response.json()}catch(_){}}
+  if(!response.ok)throw parseApiError(response,payload);
+  return payload;
+ }
+ function pathQuery(){return '?path='+encodeURIComponent(DB_PATH)}
+ async function downloadCloudSnapshot(token){
+  const response=await fetch(DISK_BASE+'/resources'+pathQuery(),{headers:{'Authorization':'OAuth '+token,'Accept':'application/json'},credentials:'omit',cache:'no-store'});
+  if(response.status===404)return null;
+  let metadata=null;try{metadata=await response.json()}catch(_){}
+  if(!response.ok)throw parseApiError(response,metadata);
+  const link=await diskRequest('/resources/download'+pathQuery(),token);
+  if(!link||!link.href)throw new Error('Яндекс Диск не вернул ссылку для скачивания базы.');
+  const fileResponse=await fetch(link.href,{method:'GET',cache:'no-store',credentials:'omit'});
+  if(!fileResponse.ok)throw new Error('Не удалось скачать базу с Яндекс Диска: HTTP '+fileResponse.status+'.');
+  let doc;try{doc=JSON.parse(await fileResponse.text())}catch(_){throw new Error('Файл базы на Яндекс Диске повреждён или имеет неизвестный формат.')}
+  const data=doc&&doc.format==='workspace-yandex-sync'?doc.data:doc;
+  if(!data||typeof data!=='object'||Array.isArray(data))throw new Error('На Яндекс Диске найден файл, который не похож на базу Рабочего пространства.');
+  return {data:data,owner:doc.owner||'',updatedAt:doc.updatedAt||metadata.modified||''};
+ }
+ async function uploadCloudSnapshot(token,owner,serialized){
+  let data;try{data=JSON.parse(serialized)}catch(_){throw new Error('Не удалось сформировать JSON базы для сохранения.')}
+  const payload=JSON.stringify({format:'workspace-yandex-sync',version:1,owner:owner,updatedAt:new Date().toISOString(),data:data});
+  const link=await diskRequest('/resources/upload'+pathQuery()+'&overwrite=true',token);
+  if(!link||!link.href)throw new Error('Яндекс Диск не вернул ссылку для загрузки базы.');
+  const response=await fetch(link.href,{method:'PUT',headers:{'Content-Type':'application/json'},body:payload,credentials:'omit',cache:'no-store'});
+  if(!response.ok)throw new Error('Не удалось загрузить базу на Яндекс Диск: HTTP '+response.status+'.');
+  return true;
+ }
+ function readMeta(){try{return JSON.parse(localStorage.getItem(META_KEY)||'null')}catch(_){return null}}
+ function hashText(value){let hash=2166136261;for(let i=0;i<value.length;i++){hash^=value.charCodeAt(i);hash=Math.imul(hash,16777619)}return(hash>>>0).toString(16)}
+ function markSynced(owner,serialized){try{localStorage.setItem(META_KEY,JSON.stringify({owner:owner,lastSyncedHash:hashText(serialized),syncedAt:new Date().toISOString()}))}catch(_){}}
+ function downloadLocalBackup(serialized,filename){
+  try{const blob=new Blob([serialized],{type:'application/json;charset=utf-8'}),url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=filename||('workspace-local-backup-'+new Date().toISOString().replace(/[:.]/g,'-')+'.json');link.style.display='none';document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),5000);return true}catch(_){return false}
+ }
+ function getBridge(){const bridge=window.__WORKSPACE_CLOUD_SYNC__;if(!bridge||typeof bridge.getSnapshot!=='function'||typeof bridge.replaceSnapshot!=='function')throw new Error('Не удалось подключить синхронизацию к базе сайта. Обнови страницу и попробуй ещё раз.');return bridge}
+ async function applyCloudToLocal(cloud,mode){
+  const bridge=getBridge(),localSnapshot=bridge.getSnapshot(),hasLocal=!!(bridge.hasData&&bridge.hasData());
+  if(hasLocal&&mode!=='clean'&&mode!=='confirmed'){
+   if(!confirm('Облачная база будет загружена на это устройство. Перед заменой локальных данных браузер скачает резервную копию. Продолжить?'))return false;
   }
-
-  window.addEventListener('message', async function(event){
-    if (event.origin !== window.location.origin) return;
-    if (!authPopup || event.source !== authPopup) return;
-    const data = event.data;
-    if (!data || data.type !== 'workspace-yandex-oauth-result') return;
-    if (!expectedOAuthState || data.state !== expectedOAuthState) {
-      authPopup = null;
-      expectedOAuthState = null;
-      showAuthError('Проверка безопасности входа не пройдена. Повтори попытку.');
-      return;
-    }
-    authPopup = null;
-    expectedOAuthState = null;
-    if (data.error) {
-      showAuthError('Яндекс не завершил вход: ' + String(data.error_description || data.error));
-      return;
-    }
-    if (!data.access_token) {
-      showAuthError('Яндекс не вернул подтверждение входа. Повтори попытку.');
-      return;
-    }
-    try {
-      await finishLogin({access_token: data.access_token});
-      statusEl.textContent = 'Вход через Яндекс выполнен. Данные техкарт по-прежнему хранятся локально в этом браузере.';
-    } catch (error) {
-      console.error('Yandex ID sign-in failed:', error);
-      showAuthError('Не удалось завершить вход. Повтори попытку.');
-    }
-  });
-  const gate = document.getElementById('yandex-auth-gate');
-  const statusEl = document.getElementById('yandex-auth-status');
-  const loginButton = document.getElementById('yandex-login-button');
-  const sessionBar = document.getElementById('yandex-session-bar');
-  const sessionName = document.getElementById('yandex-session-name');
-  const logoutButton = document.getElementById('yandex-logout-button');
-  function getUser(){
-    try { return JSON.parse(sessionStorage.getItem('workspace_yandex_profile') || 'null'); }
-    catch (_) { return null; }
+  if(hasLocal&&mode!=='clean'){
+   if(!downloadLocalBackup(localSnapshot))throw new Error('Не удалось создать резервную копию локальной базы. Экспортируй данные через «Профиль и данные» и повтори вход.');
   }
-  function showSignedIn(user){
-    const safeName = (user && (user.name || user.login)) || 'Аккаунт Яндекса';
-    sessionName.textContent = safeName;
-    sessionBar.hidden = false;
-    gate.hidden = true;
-    const sideName = document.getElementById('side-name');
-    const profileName = document.getElementById('profile-display-name');
-    if (sideName) sideName.textContent = safeName;
-    if (profileName) profileName.textContent = safeName;
+  applyingCloud=true;
+  try{const normalized=bridge.replaceSnapshot(JSON.stringify(cloud.data));markSynced(activeOwner,normalized)}finally{applyingCloud=false}
+  return true;
+ }
+ async function connectAndSync(token,user){
+  activeToken=token;activeProfile=user||{login:'Яндекс ID',name:'Аккаунт Яндекса'};activeOwner=String(activeProfile.id||activeProfile.login||'yandex-account');
+  setSyncStatus('проверка доступа…');
+  try{
+   const bridge=getBridge(),localSnapshot=bridge.getSnapshot(),localHas=!!(bridge.hasData&&bridge.hasData()),localHash=hashText(localSnapshot),localMeta=readMeta();
+   const cloud=await downloadCloudSnapshot(token);
+   if(!cloud){
+    setSyncStatus('первая загрузка базы…');await uploadCloudSnapshot(token,activeOwner,localSnapshot);markSynced(activeOwner,localSnapshot);setSyncStatus('сохранено в Яндекс Диск');
+    return {ok:true,message:'База впервые сохранена в Яндекс Диск.'};
+   }
+   if(!localHas){
+    if(!(await applyCloudToLocal(cloud,'empty')))return {ok:false,message:'Загрузка из облака отменена. Локальные данные не изменены.'};
+    setSyncStatus('база загружена с Диска');return {ok:true,message:'База загружена с Яндекс Диска.'};
+   }
+   const sameAccount=!!(localMeta&&localMeta.owner===activeOwner),localIsClean=sameAccount&&localMeta.lastSyncedHash===localHash;
+   if(localIsClean){
+    if(!(await applyCloudToLocal(cloud,'clean')))return {ok:false,message:'Загрузка из облака отменена. Локальные данные не изменены.'};
+    setSyncStatus('данные обновлены с Диска');return {ok:true,message:'Данные обновлены с Яндекс Диска.'};
+   }
+   const chooseCloud=confirm('На этом устройстве уже есть данные, а в Яндекс Диске найдена облачная база. Нажми «ОК», чтобы загрузить облачную базу на это устройство (перед заменой будет скачана резервная копия). Нажми «Отмена», чтобы оставить локальные данные и решить, загружать ли их в облако.');
+   if(chooseCloud){
+    if(!(await applyCloudToLocal(cloud,'confirmed')))return {ok:false,message:'Загрузка из облака отменена. Локальные данные не изменены.'};
+    setSyncStatus('данные загружены с Диска');return {ok:true,message:'Данные загружены с Яндекс Диска.'};
+   }
+   const chooseLocal=confirm('Загрузить текущую локальную базу в Яндекс Диск вместо существующей облачной базы? Перед заменой облачной копии будет скачан файл резервной копии облачных данных.');
+   if(chooseLocal){
+    downloadLocalBackup(JSON.stringify(cloud.data),'workspace-cloud-backup-before-replace-'+new Date().toISOString().replace(/[:.]/g,'-')+'.json');
+    await uploadCloudSnapshot(token,activeOwner,localSnapshot);markSynced(activeOwner,localSnapshot);setSyncStatus('локальная база сохранена в облако');
+    return {ok:true,message:'Локальная база сохранена в Яндекс Диск.'};
+   }
+   setSyncStatus('синхронизация отменена',true);return {ok:false,message:'Синхронизация отменена. Данные на этом устройстве и в облаке не изменены.'};
+  }catch(error){
+   console.error('Yandex Disk sync failed:',error);
+   const raw=String(error&&error.message||error||'Неизвестная ошибка');
+   const message=(error instanceof TypeError||/Failed to fetch|NetworkError/i.test(raw))?'Браузер не смог связаться с API Яндекс Диска. Проверь интернет и разрешения приложения.':raw;
+   setSyncStatus(message,true);return {ok:false,message:message};
   }
-  function showAuthError(message){
-    statusEl.textContent = message || 'Не получилось войти. Попробуй ещё раз.';
-    loginButton.disabled = false;
-  }
-  async function finishLogin(data){
-    const token = data && (data.access_token || data.oauth_token || data.token);
-    if (!token) throw new Error('Яндекс не вернул токен авторизации. Повтори попытку.');
-    let user = {login:'Яндекс ID',name:'Аккаунт Яндекса'};
-    try {
-      const response = await fetch('https://login.yandex.ru/info?format=json', {
-        headers:{'Authorization':'OAuth ' + token,'Accept':'application/json'},
-        cache:'no-store',
-        credentials:'omit'
-      });
-      if (response.ok) {
-        const info = await response.json();
-        user = {
-          id: String(info.psuid || info.id || ''),
-          login: String(info.login || 'Яндекс ID'),
-          name: String(info.real_name || info.display_name || info.login || 'Аккаунт Яндекса'),
-          email: String(info.default_email || '')
-        };
-      }
-    } catch (_) {
-      /* Continue after successful OAuth even if profile API is unavailable from this browser. */
-    }
-    /* Never persist the OAuth token. Store only non-secret display fields for this tab. */
-    sessionStorage.setItem('workspace_yandex_profile', JSON.stringify(user));
-    showSignedIn(user);
-  }
-  loginButton.addEventListener('click', function(){
-    loginButton.disabled = true;
-    statusEl.textContent = 'Открываю авторизацию Яндекс ID…';
-    beginDirectYandexLogin();
-  });
-  logoutButton.addEventListener('click', function(){
-    sessionStorage.removeItem('workspace_yandex_profile');
-    sessionBar.hidden = true;
-    gate.hidden = false;
-    statusEl.textContent = 'Ты вышел из этого рабочего сеанса. Для продолжения войди через Яндекс.';
-  });
-  const existingUser = getUser();
-  if (existingUser) showSignedIn(existingUser);
+ }
+ function scheduleCloudSave(){
+  if(!activeToken||!activeOwner||applyingCloud)return;
+  clearTimeout(saveTimer);setSyncStatus('сохранение изменений…');
+  saveTimer=setTimeout(function(){
+   uploadQueue=uploadQueue.catch(()=>{}).then(async function(){
+    if(!activeToken||applyingCloud)return;
+    const bridge=getBridge(),latest=bridge.getSnapshot(),token=activeToken,owner=activeOwner;
+    await uploadCloudSnapshot(token,owner,latest);markSynced(owner,latest);
+    setSyncStatus('синхронизировано '+new Date().toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}));
+   }).catch(function(error){console.error('Yandex Disk auto-save failed:',error);setSyncStatus(String(error&&error.message||error),true)});
+  },1200);
+ }
+ window.__WORKSPACE_YANDEX_SYNC__={
+  connect:connectAndSync,scheduleSave:scheduleCloudSave,
+  syncNow:async function(){if(!activeToken||!activeProfile){setSyncStatus('нужно войти заново',true);return}if(syncNowButton)syncNowButton.disabled=true;try{await connectAndSync(activeToken,activeProfile)}finally{if(syncNowButton)syncNowButton.disabled=false}},
+  disconnect:function(){clearTimeout(saveTimer);activeToken=null;activeOwner=null;activeProfile=null;uploadQueue=Promise.resolve();setSyncStatus('не подключено')}
+ };
+ function beginDirectYandexLogin(){
+  let state;try{state=crypto.randomUUID()}catch(_){state=String(Date.now())+'-'+Math.random().toString(36).slice(2)}
+  expectedOAuthState=state;
+  const params=new URLSearchParams({response_type:'token',client_id:CLIENT_ID,redirect_uri:REDIRECT_URI,state:state,force_confirm:'yes'});
+  authPopup=window.open('https://oauth.yandex.ru/authorize?'+params.toString(),'workspace-yandex-login','popup=yes,width=520,height=700,resizable=yes,scrollbars=yes');
+  if(!authPopup){expectedOAuthState=null;showAuthError('Браузер заблокировал окно входа. Разреши всплывающие окна для этого сайта и нажми кнопку ещё раз.');return false}
+  statusEl.textContent='Войди в Яндекс в открывшемся окне и подтверди доступ. Не закрывай это окно Workspace.';
+  loginButton.disabled=false;return true;
+ }
+ function showSignedIn(user){
+  const safeName=(user&&(user.name||user.login))||'Аккаунт Яндекса';sessionName.textContent=safeName;sessionBar.hidden=false;gate.hidden=true;
+  const sideName=document.getElementById('side-name'),profileName=document.getElementById('profile-display-name');
+  if(sideName)sideName.textContent=safeName;if(profileName)profileName.textContent=safeName;
+ }
+ function showAuthError(message){statusEl.textContent=message||'Не получилось войти. Попробуй ещё раз.';loginButton.disabled=false}
+ async function finishLogin(data){
+  const token=data&&(data.access_token||data.oauth_token||data.token);if(!token)throw new Error('Яндекс не вернул подтверждение входа. Повтори попытку.');
+  let user={login:'Яндекс ID',name:'Аккаунт Яндекса'};
+  try{
+   const response=await fetch('https://login.yandex.ru/info?format=json',{headers:{'Authorization':'OAuth '+token,'Accept':'application/json'},cache:'no-store',credentials:'omit'});
+   if(response.ok){const info=await response.json();user={id:String(info.psuid||info.id||''),login:String(info.login||'Яндекс ID'),name:String(info.real_name||info.display_name||info.login||'Аккаунт Яндекса'),email:String(info.default_email||'')}}
+  }catch(_){}
+  sessionStorage.setItem('workspace_yandex_profile',JSON.stringify(user));
+  const syncResult=await connectAndSync(token,user);showSignedIn(user);
+  statusEl.textContent=syncResult.ok?'Вход выполнен. '+syncResult.message:'Вход выполнен, но синхронизация не подключена: '+syncResult.message;
+  setSyncStatus(syncResult.message,!syncResult.ok);return syncResult;
+ }
+ loginButton.addEventListener('click',function(){loginButton.disabled=true;statusEl.textContent='Открываю авторизацию Яндекс ID…';beginDirectYandexLogin()});
+ window.addEventListener('message',async function(event){
+  if(event.origin!==window.location.origin||!authPopup||event.source!==authPopup)return;
+  const data=event.data;if(!data||data.type!=='workspace-yandex-oauth-result')return;
+  if(!expectedOAuthState||data.state!==expectedOAuthState){authPopup=null;expectedOAuthState=null;showAuthError('Проверка безопасности входа не пройдена. Повтори попытку.');return}
+  authPopup=null;expectedOAuthState=null;
+  if(data.error){showAuthError('Яндекс не завершил вход: '+String(data.error_description||data.error));return}
+  if(!data.access_token){showAuthError('Яндекс не вернул подтверждение входа. Повтори попытку.');return}
+  try{await finishLogin({access_token:data.access_token})}catch(error){console.error('Yandex login failed:',error);showAuthError('Не удалось завершить вход. '+String(error&&error.message||error))}
+ });
+ logoutButton.addEventListener('click',function(){
+  if(window.__WORKSPACE_YANDEX_SYNC__)window.__WORKSPACE_YANDEX_SYNC__.disconnect();
+  sessionStorage.removeItem('workspace_yandex_profile');sessionBar.hidden=true;gate.hidden=false;
+  statusEl.textContent='Ты вышел из этого рабочего сеанса. Локальная база останется в браузере. Для синхронизации войди через тот же Яндекс ID.';
+ });
+ if(syncNowButton)syncNowButton.addEventListener('click',function(){window.__WORKSPACE_YANDEX_SYNC__.syncNow()});
+ const existingUser=sessionStorage.getItem('workspace_yandex_profile');
+ if(existingUser)statusEl.textContent='Для продолжения и синхронизации войди через Яндекс ещё раз.';
 })();
 </script>
 
