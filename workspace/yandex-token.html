@@ -4,17 +4,45 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
 <title>Завершение входа — Рабочее пространство</title>
-<script src="https://yastatic.net/s3/passport-sdk/autofill/v1/sdk-suggest-token-with-polyfills-latest.js"></script>
+<style>
+html,body{margin:0;min-height:100%;background:#0b0a10;color:#f4f1fb;font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:480px;margin:15vh auto;padding:24px;border:1px solid #382b4c;border-radius:18px;background:#15131e}
+h1{font-size:20px;margin:0 0 10px}p{color:#bbb4ca}
+</style>
 </head>
 <body>
-<p>Завершаю вход через Яндекс ID…</p>
+<main><h1>Завершение входа через Яндекс</h1><p id="status">Передаю результат авторизации в Рабочее пространство…</p></main>
 <script>
 (function(){
-  if (window.YaSendSuggestToken) {
-    window.YaSendSuggestToken('https://emptyto.github.io', {flag:true});
-  } else {
-    document.body.textContent = 'Не удалось завершить вход. Закрой окно и попробуй ещё раз.';
+  'use strict';
+  var status = document.getElementById('status');
+  var fragment = new URLSearchParams((location.hash || '').replace(/^#/, ''));
+  var query = new URLSearchParams(location.search || '');
+  var result = {
+    type: 'workspace-yandex-oauth-result',
+    access_token: fragment.get('access_token') || query.get('access_token') || '',
+    state: fragment.get('state') || query.get('state') || '',
+    error: fragment.get('error') || query.get('error') || '',
+    error_description: fragment.get('error_description') || query.get('error_description') || ''
+  };
+  if (!window.opener) {
+    status.textContent = 'Окно входа потеряло связь с сайтом. Закрой это окно, вернись в Рабочее пространство и нажми «Войти через Яндекс» ещё раз.';
+    return;
+  }
+  try {
+    window.opener.postMessage(result, window.location.origin);
+    status.textContent = result.error
+      ? 'Яндекс не подтвердил вход. Можно закрыть это окно и вернуться на сайт.'
+      : (result.access_token ? 'Вход подтверждён. Это окно закроется автоматически.' : 'Яндекс не вернул подтверждение входа. Закрой окно и повтори попытку.');
+    if (result.access_token) {
+      /* Remove token from the callback URL before closing; never persist it here. */
+      history.replaceState(null, document.title, location.pathname);
+    }
+    setTimeout(function(){ window.close(); }, 450);
+  } catch (e) {
+    status.textContent = 'Не удалось передать результат входа. Закрой окно, вернись на сайт и попробуй ещё раз.';
   }
 })();
 </script>
